@@ -1,8 +1,10 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { uploadToS3, deleteFromS3, getKeyFromUrl } from '@/lib/s3';
 
+import { randomUUID } from 'crypto';
+
 function generateId() {
-    return crypto.randomUUID();
+    return randomUUID();
 }
 
 /**
@@ -52,6 +54,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true, data: { url, key } });
     } catch (error) {
         console.error('Upload error:', error);
-        return NextResponse.json({ success: false, error: 'Lỗi upload file' }, { status: 500 });
+        return NextResponse.json({ success: false, error: error instanceof Error ? error.message : String(error) }, { status: 500 });
     }
 }
