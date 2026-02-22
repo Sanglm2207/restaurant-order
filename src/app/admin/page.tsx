@@ -121,7 +121,10 @@ export default function AdminDashboard() {
 
     const openQR = async (t: TableData) => {
         setQrTable(t); setQrLoading(true); setQrDataUrl(null);
-        try { const d = await (await fetch(`/api/tables/${t._id}/qrcode`)).json(); if (d.success) setQrDataUrl(d.data); } catch { notify('Lỗi tạo QR', 'error'); }
+        try {
+            const d = await (await fetch(`/api/tables/${t._id}/qrcode?format=dataurl`)).json();
+            if (d.success) setQrDataUrl(d.data.qrDataUrl);
+        } catch { notify('Lỗi tạo QR', 'error'); }
         setQrLoading(false);
     };
 
