@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import { Table } from '@/models/Table';
+import '@/models/Session';
 import { randomUUID } from 'crypto';
 
 // GET /api/tables — lấy tất cả bàn

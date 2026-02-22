@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import { Product } from '@/models/Product';
+import '@/models/Category';
 
 // GET /api/products — lấy tất cả sản phẩm (public cho khách)
 export async function GET(req: NextRequest) {
