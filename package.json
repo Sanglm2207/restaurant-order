@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "server:dev": "tsx watch src/server/socket.ts",
+    "server:build": "tsc -p tsconfig.server.json",
+    "server:start": "node dist/server/server/socket.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.995.0",
