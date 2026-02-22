@@ -3,6 +3,7 @@ import connectDB from '@/lib/db';
 import { Session } from '@/models/Session';
 import { Table } from '@/models/Table';
 import { Order } from '@/models/Order';
+import '@/models/User';
 import { SessionStatus, TableStatus } from '@/types';
 
 // GET /api/sessions?tableId=xxx or ?status=OPEN

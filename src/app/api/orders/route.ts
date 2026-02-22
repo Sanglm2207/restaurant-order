@@ -3,6 +3,9 @@ import connectDB from '@/lib/db';
 import { Order } from '@/models/Order';
 import { Session } from '@/models/Session';
 import { Table } from '@/models/Table';
+import '@/models/Category';
+import '@/models/Product';
+import '@/models/User';
 import { SessionStatus, TableStatus, OrderItemStatus } from '@/types';
 
 // GET /api/orders?sessionId=xxx
