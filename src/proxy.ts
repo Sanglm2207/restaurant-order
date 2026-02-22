@@ -5,7 +5,7 @@ import { jwtVerify } from 'jose';
 const PROTECTED_ROUTES = ['/staff', '/admin'];
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret');
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl;
 
     // Only protect staff/admin routes
