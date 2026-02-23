@@ -3,7 +3,9 @@ import connectDB from '@/lib/db';
 import { Session } from '@/models/Session';
 import { Order } from '@/models/Order';
 import { Payment } from '@/models/Payment';
-import { SessionStatus } from '@/types';
+import { SessionStatus, PaymentStatus } from '@/types';
+import '@/models/User';
+import mongoose from 'mongoose';
 
 // GET /api/dashboard/stats — Thống kê cho Manager
 export async function GET(req: NextRequest) {
@@ -60,20 +62,52 @@ export async function GET(req: NextRequest) {
             .sort((a, b) => b.count - a.count)
             .slice(0, 10);
 
-        // 5. Payments
-        const totalPayments = await Payment.countDocuments(
-            Object.keys(dateFilter).length ? { createdAt: dateFilter } : {}
-        );
+        // 5. Payments & Top Employees
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        const todayPayments = await Payment.find({
+            paidAt: { $gte: todayStart, $lte: todayEnd },
+            status: PaymentStatus.SUCCESS
+        }).populate('confirmedBy', 'name email').lean();
+
+        const todayRevenue = todayPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+        const revenueByMethod = {
+            CASH: todayPayments.filter(p => p.method === 'CASH').reduce((sum, p) => sum + (p.amount || 0), 0),
+            BANK: todayPayments.filter(p => p.method === 'BANK').reduce((sum, p) => sum + (p.amount || 0), 0),
+        };
+
+        const employeeStats: Record<string, { id: string; name: string; email: string; count: number; total: number }> = {};
+        todayPayments.forEach((p) => {
+            const confirmedBy = p.confirmedBy as unknown as { _id: mongoose.Types.ObjectId; name: string; email: string };
+            if (confirmedBy) {
+                const id = confirmedBy._id.toString();
+                if (!employeeStats[id]) {
+                    employeeStats[id] = { id, name: confirmedBy.name, email: confirmedBy.email, count: 0, total: 0 };
+                }
+                employeeStats[id].count += 1;
+                employeeStats[id].total += (p.amount || 0);
+            }
+        });
+
+        const topEmployees = Object.values(employeeStats)
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 5);
 
         return NextResponse.json({
             success: true,
             data: {
                 totalRevenue,
+                todayRevenue,
+                revenueByMethod,
                 todaySessions,
                 activeSessions,
                 totalClosedSessions: closedSessions.length,
                 topItems,
-                totalPayments,
+                topEmployees,
+                totalPayments: todayPayments.length,
             },
         });
     } catch (error) {

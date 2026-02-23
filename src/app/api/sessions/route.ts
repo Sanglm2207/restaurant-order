@@ -3,6 +3,7 @@ import connectDB from '@/lib/db';
 import { Session } from '@/models/Session';
 import { Table } from '@/models/Table';
 import { Order } from '@/models/Order';
+import { Payment } from '@/models/Payment';
 import '@/models/User';
 import { SessionStatus, TableStatus } from '@/types';
 
@@ -23,7 +24,15 @@ export async function GET(req: NextRequest) {
             .sort({ startedAt: -1 })
             .lean();
 
-        return NextResponse.json({ success: true, data: sessions });
+        const sessionIds = sessions.map(s => s._id);
+        const payments = await Payment.find({ sessionId: { $in: sessionIds } }).populate('confirmedBy', 'name email').lean();
+
+        const sessionsWithPayments = sessions.map(s => ({
+            ...s,
+            payment: payments.find(p => p.sessionId.toString() === s._id.toString()) || null
+        }));
+
+        return NextResponse.json({ success: true, data: sessionsWithPayments });
     } catch (error) {
         console.error('Get sessions error:', error);
         return NextResponse.json({ success: false, error: 'Server error' }, { status: 500 });

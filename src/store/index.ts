@@ -4,9 +4,19 @@ export interface CategoryData { _id: string; name: string; description?: string;
 export interface ProductData { _id: string; name: string; description?: string; price: number; image?: string; categoryId: { _id: string; name: string } | string; isAvailable: boolean }
 export interface TableData { _id: string; name: string; zone: string; tableType: string; capacity: number; qrCode: string; status: string; createdAt: string; currentSessionId?: { _id: string; status: string; totalAmount: number; startedAt: string; } | null; }
 export interface UserData { _id: string; name: string; email: string; avatar?: string; role: string; isActive: boolean; isSystem?: boolean; createdAt: string }
-export interface SessionData { _id: string; tableId: { _id: string; name: string; zone: string } | string; status: string; totalAmount: number; paymentMethod?: string; startedAt: string; endedAt?: string }
+export interface SessionData { _id: string; tableId: { _id: string; name: string; zone: string } | string; status: string; totalAmount: number; paymentMethod?: string; startedAt: string; endedAt?: string; payment?: { confirmedBy?: { name: string; email: string }; paidAt?: string; receiptImage?: string } | null; }
 export interface OrderData { _id: string; sessionId: string; createdBy: string; createdAt: string; items: Array<{ _id: string; name: string; price: number; quantity: number; note?: string; status: string; }>; }
-export interface Stats { totalRevenue: number; todaySessions: number; activeSessions: number; totalClosedSessions: number; topItems: { name: string; count: number; revenue: number }[]; totalPayments: number }
+export interface Stats {
+    totalRevenue: number;
+    todayRevenue: number;
+    revenueByMethod: { CASH: number; BANK: number };
+    todaySessions: number;
+    activeSessions: number;
+    totalClosedSessions: number;
+    topItems: { name: string; count: number; revenue: number }[];
+    topEmployees: { id: string; name: string; email: string; count: number; total: number }[];
+    totalPayments: number
+}
 
 interface StoreState {
     stats: Stats | null;
@@ -59,7 +69,7 @@ export const useStore = create<StoreState>((set) => ({
         try { const res = await fetch(`/api/sessions?status=${status}`); const d = await res.json(); if (d.success) set({ sessions: d.data }); } catch (e) { console.error(e) }
     },
     fetchPendingOrders: async () => {
-        try { const res = await fetch('/api/orders?status=PENDING'); const d = await res.json(); if (d.success) set({ pendingOrders: d.data }); } catch (e) { console.error(e) }
+        try { const res = await fetch('/api/orders?status=PENDING,CONFIRMED'); const d = await res.json(); if (d.success) set({ pendingOrders: d.data }); } catch (e) { console.error(e) }
     },
 
     deleteItem: async (type, id) => {

@@ -55,12 +55,30 @@ export function CategoryChip({ active, ...props }: ChipProps & { active?: boolea
 interface StatCardProps { title: string; value: string | number; icon: ReactNode; color: string; bgcolor: string }
 export function StatCard({ title, value, icon, color, bgcolor }: StatCardProps) {
     return (
-        <Card sx={{ p: 2.5, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <Card sx={{
+            p: 3,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.02)',
+            border: '1px solid #f1f5f9',
+            '&:hover': { transform: 'translateY(-2px)', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05)', transition: 'all 0.3s' }
+        }}>
             <Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{title}</Typography>
-                <Typography variant="h5" sx={{ color, fontWeight: 700 }}>{value}</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.025em', mb: 0.5, display: 'block' }}>{title}</Typography>
+                <Typography variant="h4" sx={{ color: color, fontWeight: 800 }}>{value}</Typography>
             </Box>
-            <Box sx={{ width: 40, height: 40, borderRadius: 2, bgcolor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+            <Box sx={{
+                width: 48,
+                height: 48,
+                borderRadius: 3,
+                bgcolor,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: color,
+                flexShrink: 0
+            }}>
                 {icon}
             </Box>
         </Card>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import { User } from '@/models/User';
+import { hashPassword } from '@/lib/auth';
 
 // PUT /api/users/[id]
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -10,9 +11,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         const body = await req.json();
         const userToUpdate = await User.findById(id);
 
-        // Không cho update password thẳng ở đây
-        delete body.password;
         if (!userToUpdate) return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
+
+        if (body.password) {
+            body.password = await hashPassword(body.password);
+        } else {
+            delete body.password;
+        }
 
         if (userToUpdate.isSystem) {
             // Cannot change role or deactivate a system account

@@ -21,10 +21,11 @@ export async function GET(req: NextRequest) {
 
         let orders = await Order.find(filter).sort({ createdAt: -1 }).lean();
 
-        // Filter by item status nếu cần (VD: staff muốn xem order PENDING)
+        // Filter by item status nếu cần (VD: staff muốn xem order PENDING & CONFIRMED)
         if (status) {
+            const statusList = status.split(',');
             orders = orders.filter(order =>
-                order.items.some((item: Record<string, unknown>) => item.status === status)
+                order.items.some((item: Record<string, unknown>) => statusList.includes(item.status as string))
             );
         }
 
@@ -39,15 +40,22 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
     try {
         await connectDB();
-        const { sessionId, items, createdBy = 'customer' } = await req.json();
+        const { sessionId, items, createdBy = 'customer', confirm = false } = await req.json();
+        console.log('Creating order:', { sessionId, itemCount: items?.length, confirm });
 
-        // Validate session đang OPEN
+        // Validate session chưa đóng hoàn toàn
         const session = await Session.findById(sessionId);
-        if (!session || session.status !== SessionStatus.OPEN) {
+        if (!session || session.status === SessionStatus.CLOSED) {
             return NextResponse.json(
-                { success: false, error: 'Session không hợp lệ hoặc đã đóng' },
+                { success: false, error: 'Session không tồn tại hoặc đã đóng' },
                 { status: 400 }
             );
+        }
+
+        // Nếu session đang ở trạng thái đã thanh toán hoặc chờ dọn, mở lại để order tiếp
+        if ([SessionStatus.PAID, SessionStatus.PAYMENT_REQUESTED, SessionStatus.WAITING_PAYMENT].includes(session.status)) {
+            session.status = SessionStatus.OPEN;
+            await session.save();
         }
 
         // Tạo order
@@ -55,7 +63,7 @@ export async function POST(req: NextRequest) {
             sessionId,
             items: items.map((item: Record<string, unknown>) => ({
                 ...item,
-                status: OrderItemStatus.PENDING,
+                status: confirm ? OrderItemStatus.CONFIRMED : OrderItemStatus.PENDING,
             })),
             createdBy,
         });
@@ -77,6 +85,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true, data: order }, { status: 201 });
     } catch (error) {
         console.error('Create order error:', error);
-        return NextResponse.json({ success: false, error: 'Server error' }, { status: 500 });
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return NextResponse.json({ success: false, error: errorMessage }, { status: 500 });
     }
 }

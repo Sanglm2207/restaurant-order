@@ -15,6 +15,7 @@ const PaymentSchema = new Schema({
         default: PaymentStatus.PENDING,
     },
     transactionId: { type: String },
+    receiptImage: { type: String },
     paidAt: { type: Date },
     confirmedBy: { type: Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });

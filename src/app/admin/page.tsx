@@ -5,24 +5,54 @@ import { useEffect, useState } from 'react';
 import {
     Box, Typography, Grid, TextField, MenuItem, Snackbar, Alert,
     CircularProgress, Dialog, DialogContent, IconButton,
-    Button,
+    Button, Avatar, Divider, Card,
 } from '@mui/material';
-import { QrCode, Download, OpenInNew, Close } from '@mui/icons-material';
+import { QrCode, Download, OpenInNew, Close, TrendingUp, Star, Payment, EventAvailable, Email, CalendarToday, Block, CheckCircle, Refresh, Restaurant, AccessTime, ShowChart, ChairAlt, Deck } from '@mui/icons-material';
 import {
     ThemeRegistry, AppSidebar, AppHeader, ImageUpload,
     StatCard, ProductCard, FormModal, SectionContainer,
     PrimaryButton, OutlinedButton, CategoryChip,
 } from '@/components/admin';
 import type { AdminTab } from '@/components/admin';
-import { useStore, TableData, UserData, ProductData } from '@/store';
+import { useStore, TableData, UserData, ProductData, SessionData } from '@/store';
 
 type ModalType = 'category' | 'product' | 'table' | 'user' | 'profile';
+
+interface StaffPerformance {
+    totalRevenue: number;
+    todayRevenue: number;
+    totalOrders: number;
+    totalItems: number;
+    confirmedCount: number;
+    todayConfirmedCount: number;
+}
+
+interface InvoiceDetails {
+    tableId?: { name: string };
+    startedAt?: string;
+    endedAt?: string;
+    paymentMethod?: string;
+    totalAmount?: number;
+    orders?: Array<{
+        _id: string;
+        createdAt: string;
+        createdBy: string;
+        creatorName?: string;
+        items: Array<{ name: string; quantity: number; price: number }>;
+    }>;
+    payment?: {
+        confirmedBy?: { name: string; email: string };
+        paidAt?: string;
+        receiptImage?: string;
+    } | null;
+}
 
 export default function AdminDashboard() {
     const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [selectedCat, setSelectedCat] = useState('all');
+    const [selectedFloor, setSelectedFloor] = useState('all');
 
     const {
         stats, categories, products, tables, users, sessions, pendingOrders,
@@ -42,6 +72,28 @@ export default function AdminDashboard() {
     const [search, setSearch] = useState('');
     const [currentUser, setCurrentUser] = useState<UserData | null>(null);
 
+    const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+    const [invoiceDetails, setInvoiceDetails] = useState<InvoiceDetails | null>(null);
+
+    // Staff Revamp State
+    const [staffDetail, setStaffDetail] = useState<UserData | null>(null);
+    const [staffStats, setStaffStats] = useState<StaffPerformance | null>(null);
+    const [staffRoleFilter, setStaffRoleFilter] = useState('all');
+    const [staffStatusFilter, setStaffStatusFilter] = useState('all');
+    const [isFetchingStaffStats, setIsFetchingStaffStats] = useState(false);
+
+    const handleViewInvoice = async (id: string) => {
+        setViewInvoiceId(id);
+        setInvoiceDetails(null);
+        try {
+            const res = await fetch(`/api/sessions/${id}`);
+            const data: { success: boolean; data: InvoiceDetails; error?: string } = await res.json();
+            if (data.success) setInvoiceDetails(data.data);
+        } catch {
+            notify('Lỗi tải chi tiết hoá đơn', 'error');
+        }
+    };
+
     const fmt = (n: number) => new Intl.NumberFormat('vi-VN').format(n) + 'đ';
     const notify = (msg: string, severity: 'success' | 'error' = 'success') => setNotification({ msg, severity });
 
@@ -60,8 +112,12 @@ export default function AdminDashboard() {
             ]);
             setIsLoading(false);
         })();
-    }, []);
-
+    }, [fetchStats, fetchCategories, fetchProducts, fetchTables, fetchUsers, fetchSessions, fetchPendingOrders]);
+    useEffect(() => {
+        if (activeTab === 'reports' || activeTab === 'dashboard') {
+            fetchStats();
+        }
+    }, [activeTab, fetchStats]);
     const reloadData = async (type: ModalType) => {
         if (type === 'category') await fetchCategories();
         if (type === 'product') await fetchProducts();
@@ -133,7 +189,33 @@ export default function AdminDashboard() {
         document.body.appendChild(a); a.click(); document.body.removeChild(a); notify('Đã tải ảnh QR');
     };
 
-    const tabLabels: Record<AdminTab, string> = { dashboard: 'Dashboard', menu: 'Menu', tables: 'Quản lý bàn', staff: 'Nhân viên', invoices: 'Hoá đơn' };
+    const handleViewStaffDetail = async (u: UserData) => {
+        setStaffDetail(u);
+        setIsFetchingStaffStats(true);
+        try {
+            const res = await fetch(`/api/users/${u._id}/stats`);
+            const d = await res.json();
+            if (d.success) setStaffStats(d.data.performance);
+        } catch { notify('Lỗi tải thống kê', 'error'); }
+        setIsFetchingStaffStats(false);
+    };
+
+    const handleToggleStaffActive = async (u: UserData) => {
+        const res = await saveItem('users', { isActive: !u.isActive }, u._id);
+        if (res.success) {
+            reloadData('user');
+            notify(u.isActive ? 'Đã vô hiệu hoá' : 'Đã kích hoạt');
+        } else notify('Lỗi hệ thống', 'error');
+    };
+
+    const handleResetStaffPwd = async (u: UserData) => {
+        const pwd = window.prompt(`Nhập mật khẩu mới cho ${u.name}:`);
+        if (!pwd) return;
+        const res = await saveItem('users', { password: pwd }, u._id);
+        if (res.success) notify('Đã đổi mật khẩu'); else notify('Lỗi', 'error');
+    };
+
+    const tabLabels: Record<AdminTab, string> = { dashboard: 'Dashboard', menu: 'Menu', tables: 'Quản lý bàn', staff: 'Nhân viên', invoices: 'Hoá đơn', reports: 'Báo cáo & Chốt sổ' };
 
     if (isLoading) return (
         <ThemeRegistry>
@@ -152,76 +234,161 @@ export default function AdminDashboard() {
                     <AppHeader title={tabLabels[activeTab]} breadcrumb={tabLabels[activeTab]} onMenuClick={() => setSidebarOpen(true)} searchValue={search} onSearchChange={setSearch} />
 
                     <Box component="main" sx={{ flex: 1, overflow: 'auto', p: { xs: 2, md: 3 } }}>
-                        {/* ── DASHBOARD ── */}
+                        {/* ── DASHBOARD REVAMP ── */}
                         {activeTab === 'dashboard' && stats && (
-                            <Box sx={{ maxWidth: 1000 }}>
-                                <Grid container spacing={2} sx={{ mb: 3 }}>
-                                    <Grid size={{ xs: 6, md: 3 }}><StatCard title="Doanh thu" value={fmt(stats.totalRevenue)} icon="💰" color="#059669" bgcolor="#ecfdf5" /></Grid>
-                                    <Grid size={{ xs: 6, md: 3 }}><StatCard title="Session hôm nay" value={stats.todaySessions} icon="📅" color="#2563eb" bgcolor="#eff6ff" /></Grid>
-                                    <Grid size={{ xs: 6, md: 3 }}><StatCard title="Đang phục vụ" value={stats.activeSessions} icon="🍽️" color="#ea580c" bgcolor="#fff7ed" /></Grid>
-                                    <Grid size={{ xs: 6, md: 3 }}><StatCard title="Thanh toán" value={stats.totalPayments} icon="💳" color="#7c3aed" bgcolor="#f5f3ff" /></Grid>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {/* Top Stats */}
+                                <Grid container spacing={3}>
+                                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                        <StatCard title="Tổng doanh thu" value={fmt(stats.totalRevenue)} icon={<ShowChart sx={{ fontSize: 28 }} />} color="#10b981" bgcolor="rgba(16, 185, 129, 0.1)" />
+                                    </Grid>
+                                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                        <StatCard title="Session hôm nay" value={stats.todaySessions} icon={<CalendarToday sx={{ fontSize: 24 }} />} color="#3b82f6" bgcolor="rgba(59, 130, 246, 0.1)" />
+                                    </Grid>
+                                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                        <StatCard title="Đang phục vụ" value={stats.activeSessions} icon={<Restaurant sx={{ fontSize: 24 }} />} color="#f59e0b" bgcolor="rgba(245, 158, 11, 0.1)" />
+                                    </Grid>
+                                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                        <StatCard title="Thẻ thanh toán" value={stats.totalPayments} icon={<Payment sx={{ fontSize: 24 }} />} color="#8b5cf6" bgcolor="rgba(139, 92, 246, 0.1)" />
+                                    </Grid>
                                 </Grid>
-                                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
 
-                                    <SectionContainer>
-                                        <Typography variant="subtitle1" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>📈 Món bán chạy</Typography>
-                                        {stats.topItems.length === 0 ? (
-                                            <Box sx={{ textAlign: 'center', py: 4 }}>
-                                                <Typography color="text.secondary">Chưa có dữ liệu thống kê</Typography>
-                                                <Typography variant="caption">Dữ liệu sẽ xuất hiện khi có đơn hàng hoàn thành</Typography>
-                                            </Box>
-                                        ) : stats.topItems.map((item, i) => (
-                                            <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', py: 1, borderBottom: '1px solid #f5f5f5' }}>
-                                                <Typography variant="body2">{i + 1}. {item.name} × {item.count}</Typography>
-                                                <Typography variant="body2" color="primary" fontWeight={600}>{fmt(item.revenue)}</Typography>
-                                            </Box>
-                                        ))}
-                                    </SectionContainer>
+                                <Grid container spacing={3}>
+                                    {/* Left Column: Activity & Items */}
+                                    <Grid size={{ xs: 12, lg: 8 }}>
+                                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                            <SectionContainer>
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                                    <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>📈 Hiệu suất món ăn</Typography>
+                                                    <PrimaryButton size="small" variant="text" onClick={() => setActiveTab('menu')}>Chi tiết Menu</PrimaryButton>
+                                                </Box>
+                                                {stats.topItems.length === 0 ? (
+                                                    <Box sx={{ textAlign: 'center', py: 6, border: '2px dashed', borderColor: 'divider', borderRadius: 4 }}>
+                                                        <Typography color="text.secondary">Chưa có dữ liệu thống kê</Typography>
+                                                    </Box>
+                                                ) : (
+                                                    <Grid container spacing={2}>
+                                                        {stats.topItems.slice(0, 6).map((item, i) => (
+                                                            <Grid key={i} size={{ xs: 12, sm: 6 }}>
+                                                                <Box sx={{ p: 2, borderRadius: 2, border: '1px solid', borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center', '&:hover': { bgcolor: 'rgba(59, 130, 246, 0.02)', borderColor: 'primary.main' } }}>
+                                                                    <Box>
+                                                                        <Typography variant="subtitle2" fontWeight={700}>{item.name}</Typography>
+                                                                        <Typography variant="caption" color="text.secondary">{item.count} lượt bán</Typography>
+                                                                    </Box>
+                                                                    <Typography variant="body1" fontWeight={800} color="success.main">{fmt(item.revenue)}</Typography>
+                                                                </Box>
+                                                            </Grid>
+                                                        ))}
+                                                    </Grid>
+                                                )}
+                                            </SectionContainer>
 
-                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                                        <SectionContainer>
-                                            <Typography variant="subtitle1" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>🍽️ Tình trạng bàn</Typography>
-                                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#eff6ff', border: '1px solid #bfdbfe', flex: 1, minWidth: 100 }}>
-                                                    <Typography variant="body2" color="#1e3a8a" fontWeight={600}>Bàn trống</Typography>
-                                                    <Typography variant="h5" color="#1d4ed8" fontWeight={700}>{tables.filter(t => t.status === 'AVAILABLE').length}</Typography>
+                                            <SectionContainer>
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                                    <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>⌛ Đơn hàng đang chờ</Typography>
+                                                    <Typography variant="caption" sx={{ px: 1, py: 0.5, bgcolor: 'error.main', color: '#fff', borderRadius: 1, fontWeight: 700 }}>{pendingOrders.length} Yêu cầu</Typography>
                                                 </Box>
-                                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fef3c7', border: '1px solid #fde68a', flex: 1, minWidth: 100 }}>
-                                                    <Typography variant="body2" color="#92400e" fontWeight={600}>Có khách</Typography>
-                                                    <Typography variant="h5" color="#b45309" fontWeight={700}>{tables.filter(t => t.status === 'OCCUPIED' || t.status === 'PAYMENT_REQUESTED' || t.status === 'WAITING_PAYMENT').length}</Typography>
-                                                </Box>
-                                                <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fef2f2', border: '1px solid #fecaca', flex: 1, minWidth: 100 }}>
-                                                    <Typography variant="body2" color="#991b1b" fontWeight={600}>Cần hỗ trợ</Typography>
-                                                    <Typography variant="h5" color="#b91c1c" fontWeight={700}>{tables.filter(t => t.status === 'NEEDS_HELP').length}</Typography>
-                                                </Box>
-                                            </Box>
-                                        </SectionContainer>
-
-                                        <SectionContainer>
-                                            <Typography variant="subtitle1" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>⌛ Đơn hàng đang chờ</Typography>
-                                            {pendingOrders.length === 0 ? (
-                                                <Box sx={{ textAlign: 'center', py: 3 }}>
-                                                    <Typography color="text.secondary">Không có đơn hàng nào</Typography>
-                                                </Box>
-                                            ) : (
-                                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                                                    {pendingOrders.slice(0, 5).map(o => (
-                                                        <Box key={o._id} sx={{ p: 1.5, border: '1px solid #e5e7eb', borderRadius: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                            <Box>
-                                                                <Typography variant="body2" fontWeight={600}>{tables.find(t => t.currentSessionId?._id === o.sessionId)?.name || 'Bàn'}</Typography>
-                                                                <Typography variant="caption" color="text.secondary">{new Date(o.createdAt).toLocaleTimeString('vi-VN')} · {o.items.length} món</Typography>
+                                                {pendingOrders.length === 0 ? (
+                                                    <Box sx={{ textAlign: 'center', py: 6, border: '2px dashed', borderColor: 'divider', borderRadius: 4 }}>
+                                                        <Typography color="text.secondary">Tất cả đơn hàng đã được xử lý ✨</Typography>
+                                                    </Box>
+                                                ) : (
+                                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                                                        {pendingOrders.map(o => (
+                                                            <Box key={o._id} sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', transition: 'all 0.2s', '&:hover': { transform: 'scale(1.01)', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' } }}>
+                                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                                    <Avatar sx={{ bgcolor: 'warning.light', color: 'warning.dark', fontWeight: 700 }}>{tables.find(t => t.currentSessionId?._id === o.sessionId)?.name.charAt(0) || 'B'}</Avatar>
+                                                                    <Box>
+                                                                        <Typography variant="subtitle2" fontWeight={700}>{tables.find(t => t.currentSessionId?._id === o.sessionId)?.name || 'Bàn ẩn'}</Typography>
+                                                                        <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}><AccessTime sx={{ fontSize: 12 }} /> {new Date(o.createdAt).toLocaleTimeString('vi-VN')}</Typography>
+                                                                    </Box>
+                                                                </Box>
+                                                                <Box sx={{ textAlign: 'right' }}>
+                                                                    <Typography variant="body2" fontWeight={600} display="block">{o.items.length} món</Typography>
+                                                                    <PrimaryButton size="small" onClick={() => setActiveTab('tables')}>Xử lý</PrimaryButton>
+                                                                </Box>
                                                             </Box>
-                                                            <Typography variant="caption" sx={{ px: 1, py: 0.5, bgcolor: '#fef3c7', color: '#b45309', borderRadius: 1, fontWeight: 600 }}>Chờ nấu</Typography>
+                                                        ))}
+                                                    </Box>
+                                                )}
+                                            </SectionContainer>
+                                        </Box>
+                                    </Grid>
+
+                                    {/* Right Column: Status & Activity Feed */}
+                                    <Grid size={{ xs: 12, lg: 4 }}>
+                                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                            <SectionContainer>
+                                                <Typography variant="h6" sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>📍 Tình trạng bàn</Typography>
+                                                <Grid container spacing={2}>
+                                                    <Grid size={{ xs: 4, sm: 4 }}>
+                                                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#f0fdf4', border: '1px solid #bbf7d0', textAlign: 'center' }}>
+                                                            <Typography variant="caption" color="#166534" fontWeight={700} display="block">Trống</Typography>
+                                                            <Typography variant="h5" color="#166534" fontWeight={800}>{tables.filter(t => t.status === 'AVAILABLE').length}</Typography>
+                                                        </Box>
+                                                    </Grid>
+                                                    <Grid size={{ xs: 4, sm: 4 }}>
+                                                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#eff6ff', border: '1px solid #bfdbfe', textAlign: 'center' }}>
+                                                            <Typography variant="caption" color="#1e40af" fontWeight={700} display="block">Bận</Typography>
+                                                            <Typography variant="h5" color="#1e40af" fontWeight={800}>{tables.filter(t => t.status === 'OCCUPIED' || t.status === 'PAYMENT_REQUESTED' || t.status === 'WAITING_PAYMENT').length}</Typography>
+                                                        </Box>
+                                                    </Grid>
+                                                    <Grid size={{ xs: 4, sm: 4 }}>
+                                                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fef2f2', border: '1px solid #fecaca', textAlign: 'center' }}>
+                                                            <Typography variant="caption" color="#991b1b" fontWeight={700} display="block">Hỗ trợ</Typography>
+                                                            <Typography variant="h5" color="#991b1b" fontWeight={800}>{tables.filter(t => t.status === 'NEEDS_HELP').length}</Typography>
+                                                        </Box>
+                                                    </Grid>
+                                                </Grid>
+                                                <Box sx={{ mt: 3, p: 2, borderRadius: 3, bgcolor: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                                        <Typography variant="caption" fontWeight={600}>Hiệu suất bàn</Typography>
+                                                        <Typography variant="caption" fontWeight={700} color="primary">{Math.round((tables.filter(t => t.status !== 'AVAILABLE').length / tables.length) * 100) || 0}%</Typography>
+                                                    </Box>
+                                                    <Box sx={{ width: '100%', height: 6, bgcolor: '#e2e8f0', borderRadius: 3, overflow: 'hidden' }}>
+                                                        <Box sx={{ width: `${(tables.filter(t => t.status !== 'AVAILABLE').length / tables.length) * 100}%`, height: '100%', bgcolor: 'primary.main', transition: 'width 1s ease-in-out' }} />
+                                                    </Box>
+                                                </Box>
+                                            </SectionContainer>
+
+                                            <SectionContainer>
+                                                <Typography variant="h6" sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>⭐ Nhân viên xuất sắc</Typography>
+                                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                                    {stats.topEmployees.slice(0, 3).map((emp, i) => (
+                                                        <Box key={emp.id} sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                            <Avatar sx={{ width: 32, height: 32, fontSize: 14, bgcolor: i === 0 ? 'primary.main' : i === 1 ? 'secondary.main' : 'grey.400' }}>{emp.name.charAt(0)}</Avatar>
+                                                            <Box sx={{ flex: 1 }}>
+                                                                <Typography variant="subtitle2" fontWeight={700} noWrap>{emp.name}</Typography>
+                                                                <Typography variant="caption" color="text.secondary">{emp.count} hoá đơn · {fmt(emp.total)}</Typography>
+                                                            </Box>
+                                                            {i === 0 && <Star sx={{ color: '#f59e0b', fontSize: 18 }} />}
                                                         </Box>
                                                     ))}
-                                                    {pendingOrders.length > 5 && (
-                                                        <Button variant="text" size="small" onClick={() => setActiveTab('staff')}>Xem thêm...</Button>
+                                                    {stats.topEmployees.length === 0 && (
+                                                        <Typography variant="caption" color="text.secondary" textAlign="center">Cần thêm dữ liệu thanh toán</Typography>
                                                     )}
                                                 </Box>
-                                            )}
-                                        </SectionContainer>
-                                    </Box>
-                                </Box>
+                                            </SectionContainer>
+
+                                            <SectionContainer>
+                                                <Typography variant="h6" sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>📰 Hoạt động gần đây</Typography>
+                                                <Box sx={{ borderLeft: '2px solid', borderColor: 'divider', ml: 1.5, pl: 3, display: 'flex', flexDirection: 'column', gap: 3.5 }}>
+                                                    {sessions.slice(0, 5).map((s: SessionData) => (
+                                                        <Box key={s._id} sx={{ position: 'relative' }}>
+                                                            <Box sx={{ position: 'absolute', left: -24 - 1, top: 4, width: 10, height: 10, borderRadius: '50%', bgcolor: 'primary.main', border: '2px solid #fff' }} />
+                                                            <Typography variant="subtitle2" fontWeight={700}>{typeof s.tableId === 'object' ? s.tableId.name : 'Hoá đơn mới'} hoàn tất</Typography>
+                                                            <Typography variant="caption" color="text.secondary" display="block">{new Date(s.endedAt || s.startedAt).toLocaleTimeString('vi-VN')}</Typography>
+                                                            <Typography variant="body2" fontWeight={700} color="success.main" sx={{ mt: 0.5 }}>+{fmt(s.totalAmount)}</Typography>
+                                                        </Box>
+                                                    ))}
+                                                </Box>
+                                                <Box sx={{ mt: 3, textAlign: 'center' }}>
+                                                    <OutlinedButton fullWidth size="small" onClick={() => setActiveTab('invoices')}>Xem tất cả lịch sử</OutlinedButton>
+                                                </Box>
+                                            </SectionContainer>
+                                        </Box>
+                                    </Grid>
+                                </Grid>
                             </Box>
                         )}
 
@@ -263,75 +430,337 @@ export default function AdminDashboard() {
                             </SectionContainer>
                         )}
 
-                        {/* ── TABLES ── */}
+                        {/* ── TABLES REVAMP ── */}
                         {activeTab === 'tables' && (
-                            <SectionContainer>
-                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', mb: 3 }}>
-                                    <PrimaryButton onClick={() => openCreate('table')}>+ Tạo bàn mới</PrimaryButton>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                {/* Floor Navigation & Header */}
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 3, mb: 1 }}>
+                                    <Box sx={{ display: 'flex', gap: 1, backgroundColor: '#f1f5f9', p: 0.75, borderRadius: 3, overflowX: 'auto', maxWidth: '100%', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}>
+                                        {['all', ...Array.from(new Set(tables.map(t => t.zone))).sort()].map(floor => (
+                                            <Button
+                                                key={floor}
+                                                size="small"
+                                                onClick={() => setSelectedFloor(floor)}
+                                                sx={{
+                                                    px: 2,
+                                                    borderRadius: 2.5,
+                                                    textTransform: 'none',
+                                                    fontWeight: 600,
+                                                    bgcolor: selectedFloor === floor ? '#fff' : 'transparent',
+                                                    color: selectedFloor === floor ? 'primary.main' : 'text.secondary',
+                                                    boxShadow: selectedFloor === floor ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                                                    '&:hover': { bgcolor: selectedFloor === floor ? '#fff' : 'rgba(0,0,0,0.05)' }
+                                                }}
+                                            >
+                                                {floor === 'all' ? 'Tất cả tầng' : floor}
+                                            </Button>
+                                        ))}
+                                    </Box>
+                                    <PrimaryButton startIcon={<ChairAlt />} onClick={() => openCreate('table')}>+ Tạo bàn mới</PrimaryButton>
                                 </Box>
-                                <Grid container spacing={2}>
-                                    {tables.filter(t => !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.zone.toLowerCase().includes(search.toLowerCase())).map(t => (
-                                        <Grid key={t._id} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
-                                            <SectionContainer sx={{ textAlign: 'center', cursor: 'pointer', '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.08)' } }}>
-                                                <Typography variant="subtitle2" fontWeight={600}>{t.name}</Typography>
-                                                <Typography variant="caption" display="block" sx={{ mb: 1 }}>{t.zone} · {t.capacity} chỗ</Typography>
-                                                <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'center' }}>
-                                                    <IconButton size="small" onClick={() => openQR(t)}><QrCode sx={{ fontSize: 16 }} /></IconButton>
-                                                    <IconButton size="small" onClick={() => openEdit('table', t as unknown as Record<string, unknown>)}><OpenInNew sx={{ fontSize: 16 }} /></IconButton>
-                                                    <IconButton size="small" color="error" onClick={() => handleDelete('table', t._id)}><Close sx={{ fontSize: 16 }} /></IconButton>
-                                                </Box>
-                                            </SectionContainer>
+
+                                {/* Floor Summary Card */}
+                                <SectionContainer sx={{ py: 3, px: 3 }}>
+                                    <Grid container spacing={4} alignItems="center">
+                                        <Grid size={{ xs: 12, md: 4 }}>
+                                            <Box>
+                                                <Typography variant="h6" fontWeight={800}>{selectedFloor === 'all' ? 'Toàn bộ nhà hàng' : selectedFloor}</Typography>
+                                                <Typography variant="caption" color="text.secondary">Quản lý trạng thái và phiên phục vụ tại các bàn</Typography>
+                                            </Box>
                                         </Grid>
-                                    ))}
+                                        <Grid size={{ xs: 12, md: 8 }}>
+                                            <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap', justifyContent: { md: 'flex-end' } }}>
+                                                {[
+                                                    { label: 'Trống', color: '#10b981', count: tables.filter(t => (selectedFloor === 'all' || t.zone === selectedFloor) && t.status === 'AVAILABLE').length },
+                                                    { label: 'Đang dùng', color: '#3b82f6', count: tables.filter(t => (selectedFloor === 'all' || t.zone === selectedFloor) && (t.status === 'OCCUPIED' || t.status === 'PAYMENT_REQUESTED' || t.status === 'WAITING_PAYMENT')).length },
+                                                    { label: 'Cần hỗ trợ', color: '#ef4444', count: tables.filter(t => (selectedFloor === 'all' || t.zone === selectedFloor) && t.status === 'NEEDS_HELP').length },
+                                                    { label: 'Vệ sinh', color: '#6366f1', count: tables.filter(t => (selectedFloor === 'all' || t.zone === selectedFloor) && t.status === 'CLEANING').length }
+                                                ].map(s => (
+                                                    <Box key={s.label} sx={{ textAlign: 'center' }}>
+                                                        <Typography variant="h5" fontWeight={800} sx={{ color: s.color }}>{s.count}</Typography>
+                                                        <Typography variant="caption" color="text.secondary" fontWeight={600}>{s.label}</Typography>
+                                                    </Box>
+                                                ))}
+                                            </Box>
+                                        </Grid>
+                                    </Grid>
+                                </SectionContainer>
+
+                                {/* Tables Grid */}
+                                <Grid container spacing={3} sx={{ mt: 1 }}>
+                                    {tables
+                                        .filter(t => selectedFloor === 'all' || t.zone === selectedFloor)
+                                        .filter(t => !search || t.name.toLowerCase().includes(search.toLowerCase()))
+                                        .map(t => {
+                                            const isOccupied = t.status === 'OCCUPIED' || t.status === 'PAYMENT_REQUESTED' || t.status === 'WAITING_PAYMENT' || t.status === 'NEEDS_HELP';
+                                            const statusColor =
+                                                t.status === 'AVAILABLE' ? '#10b981' :
+                                                    t.status === 'NEEDS_HELP' ? '#ef4444' :
+                                                        t.status === 'CLEANING' ? '#6366f1' : '#3b82f6';
+
+                                            return (
+                                                <Grid key={t._id} size={{ xs: 6, sm: 4, md: 3, lg: 2, xl: 1.5 }}>
+                                                    <Card sx={{
+                                                        p: 0,
+                                                        position: 'relative',
+                                                        overflow: 'hidden',
+                                                        borderRadius: 3,
+                                                        border: '2px solid',
+                                                        borderColor: isOccupied ? statusColor : 'transparent',
+                                                        bgcolor: t.status === 'AVAILABLE' ? '#fff' : 'rgba(248, 250, 252, 0.8)',
+                                                        transition: 'all 0.2s',
+                                                        '&:hover': { transform: 'translateY(-4px)', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }
+                                                    }}>
+                                                        {/* Table Header/Indicator */}
+                                                        <Box sx={{ p: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                                            <Box sx={{ width: 32, height: 32, borderRadius: 2.5, bgcolor: 'rgba(0,0,0,0.03)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: t.tableType === 'VIP' ? '#f59e0b' : t.tableType === 'OUTDOOR' ? '#0ea5e9' : 'text.secondary' }}>
+                                                                {t.tableType === 'VIP' ? <Star sx={{ fontSize: 18 }} /> : t.tableType === 'OUTDOOR' ? <Deck sx={{ fontSize: 18 }} /> : <ChairAlt sx={{ fontSize: 18 }} />}
+                                                            </Box>
+                                                            <Box sx={{ p: 0.5, borderRadius: '50%', bgcolor: statusColor, boxShadow: `0 0 8px ${statusColor}` }} />
+                                                        </Box>
+
+                                                        {/* Table Info */}
+                                                        <Box sx={{ px: 2, pb: 2.5, textAlign: 'center' }}>
+                                                            <Typography variant="h6" fontWeight={800} color={isOccupied ? statusColor : 'text.primary'}>{t.name}</Typography>
+                                                            <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 1.5 }}>{t.tableType} · {t.capacity} chỗ</Typography>
+
+                                                            {isOccupied && t.currentSessionId && (
+                                                                <Box sx={{ mb: 2, p: 1, bgcolor: 'rgba(0,0,0,0.03)', borderRadius: 2 }}>
+                                                                    <Typography variant="caption" color="success.main" fontWeight={700}>{fmt(t.currentSessionId.totalAmount)}</Typography>
+                                                                </Box>
+                                                            )}
+
+                                                            <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'center', borderTop: '1px solid #f1f5f9', pt: 1.5 }}>
+                                                                <IconButton size="small" onClick={(e) => { e.stopPropagation(); openQR(t); }} sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main', bgcolor: 'rgba(59, 130, 246, 0.1)' } }}><QrCode sx={{ fontSize: 18 }} /></IconButton>
+                                                                <IconButton size="small" onClick={(e) => { e.stopPropagation(); openEdit('table', t as unknown as Record<string, unknown>); }} sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main', bgcolor: 'rgba(59, 130, 246, 0.1)' } }}><OpenInNew sx={{ fontSize: 18 }} /></IconButton>
+                                                                <IconButton size="small" onClick={(e) => { e.stopPropagation(); handleDelete('table', t._id); }} sx={{ color: 'text.secondary', '&:hover': { color: 'error.main', bgcolor: 'rgba(239, 68, 68, 0.1)' } }}><Close sx={{ fontSize: 18 }} /></IconButton>
+                                                            </Box>
+                                                        </Box>
+                                                    </Card>
+                                                </Grid>
+                                            );
+                                        })}
                                 </Grid>
-                            </SectionContainer>
+                            </Box>
                         )}
 
-                        {/* ── STAFF ── */}
+                        {/* ── STAFF REVAMP ── */}
                         {activeTab === 'staff' && (
-                            <SectionContainer>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-                                    <Typography variant="h6">Nhân viên ({users.length})</Typography>
-                                    <PrimaryButton onClick={() => openCreate('user')}>+ Thêm nhân viên</PrimaryButton>
-                                </Box>
-                                <Grid container spacing={2}>
-                                    {users.filter(u => !u.isSystem).map(u => (
-                                        <Grid key={u._id} size={{ xs: 12, sm: 6, md: 4 }}>
-                                            <SectionContainer sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <Box>
-                                                    <Typography variant="subtitle2" fontWeight={600}>{u.name}</Typography>
-                                                    <Typography variant="caption">{u.email}</Typography>
-                                                    <Box sx={{ mt: 0.5 }}>
-                                                        <Typography variant="caption" sx={{ px: 1, py: 0.25, borderRadius: 1, bgcolor: u.role === 'ADMIN' ? '#fef2f2' : u.role === 'MANAGER' ? '#eff6ff' : '#f0fdf4', color: u.role === 'ADMIN' ? '#dc2626' : u.role === 'MANAGER' ? '#2563eb' : '#16a34a', fontWeight: 500 }}>
-                                                            {u.role}
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                {/* Filter Bar */}
+                                <SectionContainer sx={{ py: 2 }}>
+                                    <Grid container spacing={2} alignItems="center">
+                                        <Grid size={{ xs: 12, md: 4 }}>
+                                            <TextField
+                                                fullWidth
+                                                size="small"
+                                                placeholder="Tìm theo tên hoặc email..."
+                                                value={search}
+                                                onChange={(e) => setSearch(e.target.value)}
+                                            />
+                                        </Grid>
+                                        <Grid size={{ xs: 6, md: 3 }}>
+                                            <TextField
+                                                select
+                                                fullWidth
+                                                size="small"
+                                                label="Vai trò"
+                                                value={staffRoleFilter}
+                                                onChange={(e) => setStaffRoleFilter(e.target.value)}
+                                            >
+                                                <MenuItem value="all">Tất cả vai trò</MenuItem>
+                                                <MenuItem value="ADMIN">Admin</MenuItem>
+                                                <MenuItem value="MANAGER">Quản lý</MenuItem>
+                                                <MenuItem value="STAFF">Nhân viên</MenuItem>
+                                            </TextField>
+                                        </Grid>
+                                        <Grid size={{ xs: 6, md: 3 }}>
+                                            <TextField
+                                                select
+                                                fullWidth
+                                                size="small"
+                                                label="Trạng thái"
+                                                value={staffStatusFilter}
+                                                onChange={(e) => setStaffStatusFilter(e.target.value)}
+                                            >
+                                                <MenuItem value="all">Tất cả trạng thái</MenuItem>
+                                                <MenuItem value="active">Đang hoạt động</MenuItem>
+                                                <MenuItem value="inactive">Đã vô hiệu hoá</MenuItem>
+                                            </TextField>
+                                        </Grid>
+                                        <Grid size={{ xs: 12, md: 2 }}>
+                                            <PrimaryButton fullWidth onClick={() => openCreate('user')}>+ Thêm mới</PrimaryButton>
+                                        </Grid>
+                                    </Grid>
+                                </SectionContainer>
+
+                                {/* Staff Grid */}
+                                <Grid container spacing={3}>
+                                    {users.filter(u => {
+                                        const matchSearch = u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase());
+                                        const matchRole = staffRoleFilter === 'all' || u.role === staffRoleFilter;
+                                        const matchStatus = staffStatusFilter === 'all' || (staffStatusFilter === 'active' ? u.isActive : !u.isActive);
+                                        return matchSearch && matchRole && matchStatus && !u.isSystem;
+                                    }).map(u => (
+                                        <Grid key={u._id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
+                                            <SectionContainer sx={{
+                                                position: 'relative',
+                                                transition: 'all 0.3s ease',
+                                                '&:hover': { transform: 'translateY(-4px)', boxShadow: '0 12px 24px rgba(0,0,0,0.1)' },
+                                                opacity: u.isActive ? 1 : 0.7,
+                                                bgcolor: u.isActive ? 'background.paper' : '#f9fafb'
+                                            }}>
+                                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 1.5 }}>
+                                                    <Avatar
+                                                        src={u.avatar}
+                                                        sx={{ width: 80, height: 80, mb: 1, border: '4px solid #fff', boxShadow: '0 4px 10px rgba(0,0,0,0.1)', cursor: 'pointer' }}
+                                                        onClick={() => handleViewStaffDetail(u)}
+                                                    >
+                                                        {u.name.charAt(0).toUpperCase()}
+                                                    </Avatar>
+
+                                                    <Box>
+                                                        <Typography variant="subtitle1" fontWeight={700}>{u.name}</Typography>
+                                                        <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'center' }}>
+                                                            <Email sx={{ fontSize: 12 }} /> {u.email}
                                                         </Typography>
                                                     </Box>
-                                                </Box>
-                                                <Box sx={{ display: 'flex', gap: 0.5 }}>
-                                                    <Button size="small" onClick={() => openEdit('user', u as unknown as Record<string, unknown>)}>Sửa</Button>
-                                                    {!u.isSystem && <Button size="small" color="error" onClick={() => handleDelete('user', u._id)}>Xoá</Button>}
+
+                                                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                                        <Typography variant="caption" sx={{ px: 1.5, py: 0.5, borderRadius: 20, fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: u.role === 'ADMIN' ? '#fee2e2' : u.role === 'MANAGER' ? '#dbeafe' : '#f0fdf4', color: u.role === 'ADMIN' ? '#991b1b' : u.role === 'MANAGER' ? '#1e40af' : '#166534' }}>
+                                                            {u.role}
+                                                        </Typography>
+                                                        <Typography variant="caption" sx={{ px: 1.5, py: 0.5, borderRadius: 20, fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em', bgcolor: u.isActive ? '#ecfdf5' : '#f3f4f6', color: u.isActive ? '#059669' : '#6b7280' }}>
+                                                            {u.isActive ? 'Active' : 'Bị khoá'}
+                                                        </Typography>
+                                                    </Box>
+
+                                                    <Box sx={{ display: 'flex', gap: 1, mt: 2, width: '100%', pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                                                        <Button size="small" variant="text" sx={{ flex: 1, fontSize: 11 }} onClick={() => handleViewStaffDetail(u)}>Chi tiết</Button>
+                                                        <IconButton size="small" onClick={() => handleResetStaffPwd(u)}><Refresh sx={{ fontSize: 18 }} /></IconButton>
+                                                        <IconButton size="small" onClick={() => openEdit('user', u as unknown as Record<string, unknown>)}><OpenInNew sx={{ fontSize: 18 }} /></IconButton>
+                                                        <IconButton size="small" color={u.isActive ? 'warning' : 'success'} onClick={() => handleToggleStaffActive(u)}>
+                                                            {u.isActive ? <Block sx={{ fontSize: 18 }} /> : <CheckCircle sx={{ fontSize: 18 }} />}
+                                                        </IconButton>
+                                                    </Box>
                                                 </Box>
                                             </SectionContainer>
                                         </Grid>
                                     ))}
                                 </Grid>
-                            </SectionContainer>
+                            </Box>
                         )}
 
                         {/* ── INVOICES ── */}
                         {activeTab === 'invoices' && (
-                            <SectionContainer>
-                                <Typography variant="h6" sx={{ mb: 2 }}>Hoá đơn ({sessions.length})</Typography>
-                                {sessions.map(s => (
-                                    <Box key={s._id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 1.5, borderBottom: '1px solid #f5f5f5' }}>
-                                        <Box>
-                                            <Typography variant="subtitle2">{typeof s.tableId === 'object' ? s.tableId.name : s._id.slice(-6)}</Typography>
-                                            <Typography variant="caption">{new Date(s.startedAt).toLocaleString('vi-VN')} {s.paymentMethod && `· ${s.paymentMethod}`}</Typography>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                <Grid container spacing={2}>
+                                    <Grid size={{ xs: 12, md: 4 }}>
+                                        <StatCard title="Tổng Doanh Thu HĐ Đóng" value={fmt(sessions.reduce((s: number, x: SessionData) => s + (x.totalAmount || 0), 0))} icon="💰" color="#059669" bgcolor="#ecfdf5" />
+                                    </Grid>
+                                    <Grid size={{ xs: 12, md: 4 }}>
+                                        <StatCard title="Qua Chuyển Khoản" value={fmt(sessions.filter((s: SessionData) => s.paymentMethod === 'BANK').reduce((s: number, x: SessionData) => s + (x.totalAmount || 0), 0))} icon="🏦" color="#2563eb" bgcolor="#eff6ff" />
+                                    </Grid>
+                                    <Grid size={{ xs: 12, md: 4 }}>
+                                        <StatCard title="Bằng Tiền Mặt" value={fmt(sessions.filter((s: SessionData) => s.paymentMethod === 'CASH').reduce((s: number, x: SessionData) => s + (x.totalAmount || 0), 0))} icon="💵" color="#d97706" bgcolor="#fef3c7" />
+                                    </Grid>
+                                </Grid>
+                                <SectionContainer>
+                                    <Typography variant="h6" sx={{ mb: 2 }}>Danh sách hoá đơn ({sessions.length})</Typography>
+                                    {sessions.map((s: SessionData) => (
+                                        <Box key={s._id} onClick={() => handleViewInvoice(s._id)} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2, borderBottom: '1px solid #f5f5f5', cursor: 'pointer', '&:hover': { bgcolor: '#f9fafb' } }}>
+                                            <Box>
+                                                <Typography variant="subtitle2" fontWeight={600}>{typeof s.tableId === 'object' ? s.tableId.name : s._id.slice(-6)}</Typography>
+                                                <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>{new Date(s.startedAt).toLocaleString('vi-VN')} {s.paymentMethod && `· ${s.paymentMethod === 'BANK' ? 'Chuyển khoản' : 'Tiền mặt'}`}</Typography>
+                                                {s.payment?.confirmedBy && (
+                                                    <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        <Box sx={{ width: 24, height: 24, borderRadius: '50%', bgcolor: 'primary.main', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 700 }}>
+                                                            {s.payment.confirmedBy.name.charAt(0).toUpperCase()}
+                                                        </Box>
+                                                        <Typography variant="caption" sx={{ fontWeight: 600, color: '#16a34a' }}>
+                                                            {s.payment.confirmedBy.name}
+                                                        </Typography>
+                                                    </Box>
+                                                )}
+                                            </Box>
+                                            <Box sx={{ textAlign: 'right' }}>
+                                                <Typography variant="subtitle2" color="success.main" fontWeight={700}>{fmt(s.totalAmount || 0)}</Typography>
+                                                {s.payment?.receiptImage && (
+                                                    <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', mt: 0.5 }}>📸 Có ảnh</Typography>
+                                                )}
+                                            </Box>
                                         </Box>
-                                        <Typography variant="subtitle2" color="primary" fontWeight={700}>{fmt(s.totalAmount)}</Typography>
-                                    </Box>
-                                ))}
-                            </SectionContainer>
+                                    ))}
+                                </SectionContainer>
+                            </Box>
+                        )}
+
+                        {activeTab === 'reports' && (
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <SectionContainer>
+                                    <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>📊 Tổng quan ngày hôm nay</Typography>
+                                    <Grid container spacing={3}>
+                                        <Grid size={{ xs: 12, md: 4 }}>
+                                            <StatCard title="Doanh thu hôm nay" value={fmt(stats?.todayRevenue || 0)} icon={<TrendingUp />} color="#10b981" bgcolor="rgba(16, 185, 129, 0.1)" />
+                                        </Grid>
+                                        <Grid size={{ xs: 12, md: 4 }}>
+                                            <StatCard title="Tiền mặt" value={fmt(stats?.revenueByMethod?.CASH || 0)} icon={<Payment />} color="#f59e0b" bgcolor="rgba(245, 158, 11, 0.1)" />
+                                        </Grid>
+                                        <Grid size={{ xs: 12, md: 4 }}>
+                                            <StatCard title="Chuyển khoản" value={fmt(stats?.revenueByMethod?.BANK || 0)} icon={<EventAvailable />} color="#3b82f6" bgcolor="rgba(59, 130, 246, 0.1)" />
+                                        </Grid>
+                                    </Grid>
+                                </SectionContainer>
+
+                                <Grid container spacing={3}>
+                                    <Grid size={{ xs: 12, md: 6 }}>
+                                        <SectionContainer>
+                                            <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>⭐ Top Nhân viên xuất sắc</Typography>
+                                            {stats?.topEmployees && stats.topEmployees.length > 0 ? (
+                                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                                    {stats.topEmployees.map((emp, idx) => (
+                                                        <Box key={emp.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 2, borderRadius: 2, border: '1px solid', borderColor: 'divider', bgcolor: idx === 0 ? 'rgba(234, 179, 8, 0.05)' : 'transparent' }}>
+                                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                                <Avatar sx={{ bgcolor: idx === 0 ? '#eab308' : 'primary.main', width: 40, height: 40 }}>
+                                                                    {idx === 0 ? <Star /> : emp.name.charAt(0).toUpperCase()}
+                                                                </Avatar>
+                                                                <Box>
+                                                                    <Typography variant="subtitle2" fontWeight={700}>{emp.name}</Typography>
+                                                                    <Typography variant="caption" color="text.secondary">{emp.count} giao dịch</Typography>
+                                                                </Box>
+                                                            </Box>
+                                                            <Typography variant="subtitle1" fontWeight={800} color="primary">{fmt(emp.total)}</Typography>
+                                                        </Box>
+                                                    ))}
+                                                </Box>
+                                            ) : (
+                                                <Box sx={{ p: 4, textAlign: 'center' }}><Typography color="text.secondary">Chưa có dữ liệu giao dịch</Typography></Box>
+                                            )}
+                                        </SectionContainer>
+                                    </Grid>
+
+                                    <Grid size={{ xs: 12, md: 6 }}>
+                                        <SectionContainer>
+                                            <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>📈 Top món bán chạy</Typography>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                                                {stats?.topItems.slice(0, 5).map((item, idx: number) => (
+                                                    <Box key={idx} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: 1.5, borderRadius: 2, bgcolor: '#f9fafb' }}>
+                                                        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                                                            <Typography variant="subtitle2" fontWeight={700} sx={{ width: 24, color: 'text.disabled' }}>{idx + 1}</Typography>
+                                                            <Typography variant="body2">{item.name}</Typography>
+                                                        </Box>
+                                                        <Typography variant="body2" fontWeight={700}>{item.count} món</Typography>
+                                                    </Box>
+                                                ))}
+                                            </Box>
+                                        </SectionContainer>
+                                    </Grid>
+                                </Grid>
+
+                                <Box sx={{ display: 'flex', justifyContent: 'center', pb: 4 }}>
+                                    <PrimaryButton startIcon={<Download />} onClick={() => window.print()} sx={{ px: 4 }}>Xuất báo cáo ngày</PrimaryButton>
+                                </Box>
+                            </Box>
                         )}
                     </Box>
                 </Box>
@@ -413,6 +842,150 @@ export default function AdminDashboard() {
                             <Button variant="contained" color="primary" fullWidth startIcon={<Download />} onClick={() => qrTable && dlQR(qrTable)}>Tải QR</Button>
                             <Button variant="outlined" fullWidth startIcon={<OpenInNew />} onClick={() => { if (qrTable) window.open(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/order/${qrTable._id}`, '_blank'); }}>Mở link</Button>
                         </Box>
+                    </DialogContent>
+                </Dialog>
+
+                {/* ── Invoice Dialog ── */}
+                <Dialog open={!!viewInvoiceId} onClose={() => setViewInvoiceId(null)} maxWidth="sm" fullWidth>
+                    <DialogContent sx={{ p: 0 }}>
+                        {!invoiceDetails ? (
+                            <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress /></Box>
+                        ) : (
+                            <Box sx={{ p: 3 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                    <Typography variant="h6">Chi tiết Hoá Đơn</Typography>
+                                    <IconButton onClick={() => setViewInvoiceId(null)} size="small" sx={{ p: 0.5 }}><Close fontSize="small" /></IconButton>
+                                </Box>
+                                <Box sx={{ mb: 3 }}>
+                                    <Typography variant="body2" color="text.secondary" gutterBottom><b>Bàn:</b> {invoiceDetails.tableId?.name}</Typography>
+                                    <Typography variant="body2" color="text.secondary" gutterBottom><b>Mở lúc:</b> {invoiceDetails.startedAt ? new Date(invoiceDetails.startedAt).toLocaleString('vi-VN') : ''}</Typography>
+                                    <Typography variant="body2" color="text.secondary" gutterBottom><b>Đóng lúc:</b> {invoiceDetails.endedAt ? new Date(invoiceDetails.endedAt).toLocaleString('vi-VN') : 'Đang mở'}</Typography>
+                                    <Typography variant="body2" color="text.secondary" gutterBottom><b>Hình thức thanh toán:</b> {invoiceDetails.paymentMethod === 'BANK' ? 'Chuyển khoản' : invoiceDetails.paymentMethod === 'CASH' ? 'Tiền mặt' : 'Chưa ghi nhận'}</Typography>
+                                </Box>
+
+                                <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Các món đã Order:</Typography>
+                                <Box sx={{ p: 2, bgcolor: '#f9fafb', borderRadius: 2, mb: 3 }}>
+                                    {invoiceDetails.orders?.map(o => (
+                                        <Box key={o._id} sx={{ mb: 2 }}>
+                                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>Order lúc: {new Date(o.createdAt).toLocaleTimeString('vi-VN')} · Tạo bởi: {o.creatorName || o.createdBy}</Typography>
+                                            {o.items.map((item, idx) => (
+                                                <Box key={idx} sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                                                    <Typography variant="body2">{item.quantity}x {item.name}</Typography>
+                                                    <Typography variant="body2" fontWeight={500}>{fmt(item.price * item.quantity)}</Typography>
+                                                </Box>
+                                            ))}
+                                        </Box>
+                                    ))}
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', pt: 2, mt: 1, borderTop: '1px solid #e5e7eb' }}>
+                                        <Typography variant="subtitle2" fontWeight={700}>TỔNG CỘNG</Typography>
+                                        <Typography variant="subtitle2" color="primary" fontWeight={800}>{fmt(invoiceDetails.totalAmount || 0)}</Typography>
+                                    </Box>
+                                </Box>
+
+                                {invoiceDetails.payment && (
+                                    <Box>
+                                        <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Thông tin thu tiền:</Typography>
+                                        <Box sx={{ p: 2, border: '1px solid #e5e7eb', borderRadius: 2, bgcolor: '#f0fdf4', borderColor: '#bcf0da' }}>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1.5 }}>
+                                                <Box sx={{ width: 32, height: 32, borderRadius: '50%', bgcolor: 'primary.main', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, fontWeight: 700 }}>
+                                                    {invoiceDetails.payment.confirmedBy?.name ? invoiceDetails.payment.confirmedBy.name.charAt(0).toUpperCase() : '?'}
+                                                </Box>
+                                                <Box>
+                                                    <Typography variant="body2" fontWeight={700} color="#16a34a">{invoiceDetails.payment.confirmedBy?.name || 'Không xác định'}</Typography>
+                                                    <Typography variant="caption" color="text.secondary" display="block">{invoiceDetails.payment.confirmedBy?.email}</Typography>
+                                                </Box>
+                                            </Box>
+                                            <Typography variant="caption" display="block" color="text.secondary"><b>Xác nhận lúc:</b> {invoiceDetails.payment.paidAt ? new Date(invoiceDetails.payment.paidAt).toLocaleString('vi-VN') : 'Chưa xác nhận'}</Typography>
+                                            {invoiceDetails.payment.receiptImage && (
+                                                <Box sx={{ mt: 2, textAlign: 'center' }}>
+                                                    <Typography variant="caption" display="block" sx={{ mb: 1 }}>Ảnh hoá đơn/CK đính kèm:</Typography>
+                                                    <img src={invoiceDetails.payment.receiptImage} alt="Receipt" style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 8 }} />
+                                                    <Box sx={{ mt: 1 }}>
+                                                        <Button size="small" variant="text" startIcon={<OpenInNew />} onClick={() => window.open(invoiceDetails.payment?.receiptImage, '_blank')}>Mở lớn</Button>
+                                                    </Box>
+                                                </Box>
+                                            )}
+                                        </Box>
+                                    </Box>
+                                )}
+                            </Box>
+                        )}
+                    </DialogContent>
+                </Dialog>
+
+                {/* ── Staff Detail Dialog ── */}
+                <Dialog open={!!staffDetail} onClose={() => setStaffDetail(null)} maxWidth="sm" fullWidth>
+                    <DialogContent sx={{ p: 0 }}>
+                        {staffDetail && (
+                            <Box>
+                                {/* Header with background */}
+                                <Box sx={{ height: 120, bgcolor: 'primary.main', position: 'relative' }}>
+                                    <IconButton onClick={() => setStaffDetail(null)} sx={{ position: 'absolute', top: 8, right: 8, color: '#fff' }}><Close /></IconButton>
+                                </Box>
+                                <Box sx={{ px: 3, pb: 3, position: 'relative', mt: -6 }}>
+                                    <Avatar src={staffDetail.avatar} sx={{ width: 100, height: 100, border: '4px solid #fff', mb: 2 }}>{staffDetail.name.charAt(0)}</Avatar>
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 2 }}>
+                                        <Box>
+                                            <Typography variant="h5" fontWeight={800}>{staffDetail.name}</Typography>
+                                            <Typography variant="body2" color="text.secondary">{staffDetail.email} · {staffDetail.role}</Typography>
+                                        </Box>
+                                        <Box sx={{ display: 'flex', gap: 1 }}>
+                                            <OutlinedButton size="small" onClick={() => handleToggleStaffActive(staffDetail)}>{staffDetail.isActive ? 'Vô hiệu hoá' : 'Kích hoạt'}</OutlinedButton>
+                                            <PrimaryButton size="small" onClick={() => { setStaffDetail(null); openEdit('user', staffDetail as unknown as Record<string, unknown>); }}>Chỉnh sửa</PrimaryButton>
+                                        </Box>
+                                    </Box>
+
+                                    <Divider sx={{ my: 3 }} />
+
+                                    <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 2 }}>Hiệu suất làm việc</Typography>
+
+                                    {isFetchingStaffStats ? (
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress size={32} /></Box>
+                                    ) : staffStats ? (
+                                        <Grid container spacing={2}>
+                                            <Grid size={{ xs: 6, sm: 4 }}>
+                                                <Box sx={{ p: 2, bgcolor: '#f0fdf4', borderRadius: 2, textAlign: 'center' }}>
+                                                    <Typography variant="caption" color="#166534" fontWeight={600} display="block">Doanh thu xác nhận</Typography>
+                                                    <Typography variant="subtitle1" fontWeight={800} color="#166534">{fmt(staffStats.totalRevenue)}</Typography>
+                                                </Box>
+                                            </Grid>
+                                            <Grid size={{ xs: 6, sm: 4 }}>
+                                                <Box sx={{ p: 2, bgcolor: '#eff6ff', borderRadius: 2, textAlign: 'center' }}>
+                                                    <Typography variant="caption" color="#1e40af" fontWeight={600} display="block">Hôm nay (Doanh thu)</Typography>
+                                                    <Typography variant="subtitle1" fontWeight={800} color="#1e40af">{fmt(staffStats.todayRevenue)}</Typography>
+                                                </Box>
+                                            </Grid>
+                                            <Grid size={{ xs: 6, sm: 4 }}>
+                                                <Box sx={{ p: 2, bgcolor: '#fff7ed', borderRadius: 2, textAlign: 'center' }}>
+                                                    <Typography variant="caption" color="#9a3412" fontWeight={600} display="block">Order đã tạo</Typography>
+                                                    <Typography variant="subtitle1" fontWeight={800} color="#9a3412">{staffStats.totalOrders}</Typography>
+                                                </Box>
+                                            </Grid>
+                                        </Grid>
+                                    ) : (
+                                        <Typography variant="caption" color="text.secondary">Chưa có dữ liệu thống kê cho nhân viên này.</Typography>
+                                    )}
+
+                                    <Box sx={{ mt: 4 }}>
+                                        <Typography variant="subtitle2" sx={{ mb: 1.5, display: 'flex', alignItems: 'center', gap: 1 }}><CalendarToday sx={{ fontSize: 16 }} /> Thông tin chi tiết</Typography>
+                                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', pb: 1, borderBottom: '1px solid #f3f4f6' }}>
+                                                <Typography variant="caption" color="text.secondary">Ngày tham gia</Typography>
+                                                <Typography variant="caption" fontWeight={600}>{new Date(staffDetail.createdAt).toLocaleDateString('vi-VN')}</Typography>
+                                            </Box>
+                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', pb: 1, borderBottom: '1px solid #f3f4f6' }}>
+                                                <Typography variant="caption" color="text.secondary">Trạng thái tài khoản</Typography>
+                                                <Typography variant="caption" fontWeight={600} color={staffDetail.isActive ? 'success.main' : 'error.main'}>{staffDetail.isActive ? 'Đang hoạt động' : 'Đã khoá'}</Typography>
+                                            </Box>
+                                            <Box sx={{ display: 'flex', justifyContent: 'space-between', pb: 1 }}>
+                                                <Typography variant="caption" color="text.secondary">ID nhân viên</Typography>
+                                                <Typography variant="caption" fontWeight={600}>{staffDetail._id}</Typography>
+                                            </Box>
+                                        </Box>
+                                    </Box>
+                                </Box>
+                            </Box>
+                        )}
                     </DialogContent>
                 </Dialog>
 

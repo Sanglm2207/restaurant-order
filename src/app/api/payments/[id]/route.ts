@@ -4,13 +4,14 @@ import { Payment } from '@/models/Payment';
 import { Session } from '@/models/Session';
 import { Table } from '@/models/Table';
 import { PaymentStatus, SessionStatus, TableStatus } from '@/types';
+import { getCurrentUser } from '@/lib/auth';
 
 // PUT /api/payments/[id] — Xác nhận thanh toán (staff confirm)
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
         await connectDB();
         const { id } = await params;
-        const { status, confirmedBy } = await req.json();
+        const { status, confirmedBy, receiptImage, paymentMethod } = await req.json();
 
         const payment = await Payment.findById(id);
         if (!payment) {
@@ -18,9 +19,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         }
 
         payment.status = status;
+        if (receiptImage) payment.receiptImage = receiptImage;
+        if (paymentMethod) payment.method = paymentMethod;
         if (status === PaymentStatus.SUCCESS) {
             payment.paidAt = new Date();
-            if (confirmedBy) payment.confirmedBy = confirmedBy;
+
+            // Nếu client không gửi confirmedBy, lẫy từ user đang đăng nhập
+            if (confirmedBy) {
+                payment.confirmedBy = confirmedBy;
+            } else {
+                const user = await getCurrentUser();
+                if (user) payment.confirmedBy = user._id;
+            }
 
             // Update session
             const session = await Session.findById(payment.sessionId);

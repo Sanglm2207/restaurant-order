@@ -7,10 +7,10 @@ import {
 } from '@mui/material';
 import {
     Dashboard as DashboardIcon, Restaurant, TableBar, People,
-    Receipt, Logout, Settings,
+    Receipt, Logout, Settings, Assessment,
 } from '@mui/icons-material';
 
-export type AdminTab = 'dashboard' | 'menu' | 'tables' | 'staff' | 'invoices';
+export type AdminTab = 'dashboard' | 'menu' | 'tables' | 'staff' | 'invoices' | 'reports';
 
 interface NavItem { key: AdminTab; label: string; icon: ReactNode }
 
@@ -25,6 +25,7 @@ const mainNav: NavItem[] = [
 const mgmtNav: NavItem[] = [
     { key: 'staff', label: 'Nhân viên', icon: <People sx={{ fontSize: 20 }} /> },
     { key: 'invoices', label: 'Hoá đơn', icon: <Receipt sx={{ fontSize: 20 }} /> },
+    { key: 'reports', label: 'Chốt sổ / Báo cáo', icon: <Assessment sx={{ fontSize: 20 }} /> },
 ];
 
 interface Props {

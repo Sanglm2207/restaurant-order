@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { WSEventType, type WSMessage } from '@/types';
-import { ThemeProvider, createTheme, CssBaseline, Box, Typography, Button, IconButton, Paper, Tabs, Tab, Dialog, Snackbar, Alert, CircularProgress, Avatar, Menu, MenuItem, ListItemIcon, Divider, TextField } from '@mui/material';
+import { ThemeProvider, createTheme, CssBaseline, Box, Typography, Button, IconButton, Paper, Tabs, Tab, Dialog, Snackbar, Alert, CircularProgress, Avatar, Menu, MenuItem, ListItemIcon, Divider, TextField, Select } from '@mui/material';
 import { Close, Refresh, Restaurant, Logout, Person } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
 import { useStore, TableData, OrderData, UserData } from '@/store';
@@ -49,6 +49,7 @@ export default function StaffDashboard() {
     // Payment Dialog State
     const [showPaymentConfirmDialog, setShowPaymentConfirmDialog] = useState(false);
     const [receiptImage, setReceiptImage] = useState<string | undefined>(undefined);
+    const [paymentMethod, setPaymentMethod] = useState<'BANK' | 'CASH'>('BANK');
     const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
 
     const router = useRouter();
@@ -90,22 +91,65 @@ export default function StaffDashboard() {
 
     const confirmPayment = async () => {
         if (!selectedTable?.currentSessionId) return;
+        const sessionId = selectedTable.currentSessionId._id;
         setIsConfirmingPayment(true);
-        const payRes = await fetch(`/api/payments?sessionId=${selectedTable.currentSessionId._id}`);
-        const payment = (await payRes.json()).data?.[0];
-        if (payment) await fetch(`/api/payments/${payment._id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'SUCCESS', receiptImage }) });
 
-        sendMessage({ type: WSEventType.PAYMENT_SUCCESS, payload: { tableId: selectedTable._id }, tableId: selectedTable._id });
-        fetchTables(); notify('Xác nhận thanh toán thành công');
-        setShowPaymentConfirmDialog(false);
-        setSelectedTable(null);
-        setReceiptImage(undefined);
-        setIsConfirmingPayment(false);
+        try {
+            // 1. Lấy hoặc tạo bản ghi thanh toán
+            const payRes = await fetch(`/api/payments?sessionId=${sessionId}`);
+            const payData = await payRes.json();
+            let payment = payData.data?.[0];
+
+            if (!payment) {
+                // Nếu chưa có (khách chưa bấm thanh toán trên app), tạo mới luôn
+                const createRes = await fetch('/api/payments', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId, method: paymentMethod })
+                });
+                const createData = await createRes.json();
+                payment = createData.data;
+            }
+
+            if (payment) {
+                // 2. Cập nhật trạng thái SUCCESS và người xác nhận
+                await fetch(`/api/payments/${payment._id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        status: 'SUCCESS',
+                        receiptImage,
+                        paymentMethod,
+                        confirmedBy: currentUser?._id
+                    })
+                });
+            }
+
+            // 3. Cập nhật Session và Table
+            await fetch(`/api/sessions/${sessionId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paymentMethod, status: 'PAID' })
+            });
+
+            sendMessage({ type: WSEventType.PAYMENT_SUCCESS, payload: { tableId: selectedTable._id }, tableId: selectedTable._id });
+            fetchTables();
+            notify('Xác nhận thanh toán thành công');
+            setShowPaymentConfirmDialog(false);
+            setSelectedTable(prev => prev ? { ...prev, status: 'CLEANING' } : null);
+            setReceiptImage(undefined);
+        } catch (err) {
+            console.error(err);
+            notify('Lỗi xử lý thanh toán', 'error');
+        } finally {
+            setIsConfirmingPayment(false);
+        }
     };
 
     const handleOpenPaymentConfirm = (table: TableData) => {
         setSelectedTable(table);
         setReceiptImage(undefined);
+        setPaymentMethod('BANK');
         setShowPaymentConfirmDialog(true);
     };
 
@@ -116,7 +160,7 @@ export default function StaffDashboard() {
         fetchTables(); notify('Đã đóng bàn'); setSelectedTable(null);
     };
 
-    const submitStaffOrder = async () => {
+    const submitStaffOrder = async (confirmInstantly = false) => {
         if (!selectedTable || staffOrderItems.length === 0) return;
 
         // If no session, create one first
@@ -132,8 +176,23 @@ export default function StaffDashboard() {
             }
         }
 
-        const res = await fetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, items: staffOrderItems, createdBy: 'staff' }) });
-        if ((await res.json()).success && sessionId) { setStaffOrderItems([]); setShowOrderForTable(false); fetchTableOrders(sessionId); fetchTables(); notify('Gửi order thành công'); }
+        const res = await fetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, items: staffOrderItems, createdBy: 'staff', confirm: confirmInstantly }) });
+        const data = await res.json();
+        if (data.success && sessionId) {
+            sendMessage({
+                type: WSEventType.NEW_ORDER,
+                payload: { order: data.data, tableId: selectedTable._id, tableName: selectedTable.name, confirm: confirmInstantly },
+                tableId: selectedTable._id
+            });
+            setStaffOrderItems([]);
+            setShowOrderForTable(false);
+            fetchTableOrders(sessionId);
+            fetchTables();
+            fetchPendingOrders();
+            notify('Gửi order thành công');
+        } else {
+            notify(data.error || 'Lỗi gửi order', 'error');
+        }
     };
 
     const handleLogout = async () => {
@@ -341,7 +400,16 @@ export default function StaffDashboard() {
                                             )
                                         })}
                                     </Box>
-                                    {staffOrderItems.length > 0 && <Button fullWidth variant="contained" sx={{ mt: 3, py: 1.5 }} onClick={submitStaffOrder}>Gửi Order ({staffOrderItems.reduce((s, i) => s + i.quantity, 0)})</Button>}
+                                    {staffOrderItems.length > 0 && (
+                                        <Box sx={{ mt: 3, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                            <Button fullWidth variant="contained" color="secondary" sx={{ py: 1.5 }} onClick={() => submitStaffOrder(true)}>
+                                                Gửi & Xác nhận ngay ({staffOrderItems.reduce((s, i) => s + i.quantity, 0)})
+                                            </Button>
+                                            <Button fullWidth variant="outlined" sx={{ py: 1.5, borderColor: 'rgba(255,255,255,0.2)' }} onClick={() => submitStaffOrder(false)}>
+                                                Chỉ gửi Order
+                                            </Button>
+                                        </Box>
+                                    )}
                                 </Box>
                             )}
                         </Box>
@@ -370,21 +438,33 @@ export default function StaffDashboard() {
                         <Typography variant="h6">Xác nhận thanh toán</Typography>
                         <IconButton onClick={() => setShowPaymentConfirmDialog(false)} size="small" sx={{ p: 0.5 }}><Close fontSize="small" /></IconButton>
                     </Box>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Vui lòng chắc chắn tiền đã vào tài khoản hoặc khách đã đưa tiền mặt. Bạn có thể lưu lại hoá đơn/ảnh chụp chuyển khoản (tuỳ chọn).
-                    </Typography>
-
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center', mb: 3 }}>
-                        <ImageUpload
-                            folder="receipts"
-                            value={receiptImage}
-                            onChange={(url) => setReceiptImage(url)}
-                            shape="square"
-                            size={160}
-                        />
-                        <Typography variant="caption" color="text.secondary">Chọn ảnh hoá đơn (không bắt buộc)</Typography>
+                    <Box sx={{ mb: 3 }}>
+                        <Typography variant="body2" sx={{ mb: 1 }}>Hình thức thanh toán</Typography>
+                        <Select fullWidth size="small" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value as 'BANK' | 'CASH')}>
+                            <MenuItem value="BANK">Chuyển khoản</MenuItem>
+                            <MenuItem value="CASH">Tiền mặt (Trực tiếp)</MenuItem>
+                        </Select>
                     </Box>
-                    <Button variant="contained" fullWidth disabled={isConfirmingPayment} onClick={confirmPayment} sx={{ py: 1.5, bgcolor: '#22c55e', '&:hover': { bgcolor: '#16a34a' } }}>
+
+                    {paymentMethod === 'BANK' && (
+                        <>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                Vui lòng tải lên ảnh chụp hoá đơn hoặc ảnh chụp màn hình chuyển khoản (Bắt buộc) để xác nhận thanh toán.
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center', mb: 3 }}>
+                                <ImageUpload
+                                    folder="receipts"
+                                    value={receiptImage}
+                                    onChange={(url) => setReceiptImage(url)}
+                                    shape="square"
+                                    size={160}
+                                />
+                                <Typography variant="caption" color="text.secondary">Chọn ảnh hoá đơn (bắt buộc)</Typography>
+                            </Box>
+                        </>
+                    )}
+
+                    <Button variant="contained" fullWidth disabled={isConfirmingPayment || (paymentMethod === 'BANK' && !receiptImage)} onClick={confirmPayment} sx={{ py: 1.5, bgcolor: '#22c55e', '&:hover': { bgcolor: '#16a34a' }, '&.Mui-disabled': { bgcolor: 'rgba(255,255,255,0.05)' } }}>
                         {isConfirmingPayment ? <CircularProgress size={24} color="inherit" /> : 'Chắc chắn, đã thu tiền'}
                     </Button>
                 </Box>
@@ -393,6 +473,6 @@ export default function StaffDashboard() {
             <Snackbar open={!!notification} autoHideDuration={3000} onClose={() => setNotification(null)} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
                 <Alert severity={notification?.type || 'success'} sx={{ borderRadius: 3 }}>{notification?.msg}</Alert>
             </Snackbar>
-        </ThemeProvider>
+        </ThemeProvider >
     );
 }
